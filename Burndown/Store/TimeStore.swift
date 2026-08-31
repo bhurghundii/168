@@ -5,7 +5,7 @@ import SwiftData
 /// The single facade for every mutation and every derived read in the app.
 /// Views read model objects via `@Query` (always in sync with SwiftData's
 /// change tracking); everything else — starting/stopping a timer, manual
-/// adjustments, category CRUD, seeding, import/export, and all week-window
+/// adjustments, category CRUD, import/export, and all week-window
 /// arithmetic — goes through this type, which holds the *same* `ModelContext`
 /// `@Query` uses. There is exactly one source of truth; nothing here caches
 /// model data separately.
@@ -19,27 +19,32 @@ final class TimeStore {
     private let modelContext: ModelContext
     var calendar: Calendar
     var now: () -> Date
+    private let liveActivityManager: LiveActivityManaging
 
-    init(modelContext: ModelContext, calendar: Calendar = WeekWindow.mondayStart(), now: @escaping () -> Date = Date.init) {
+    init(modelContext: ModelContext,
+         calendar: Calendar = WeekWindow.mondayStart(),
+         now: @escaping () -> Date = Date.init,
+         liveActivityManager: LiveActivityManaging? = nil) {
         self.modelContext = modelContext
         self.calendar = calendar
         self.now = now
-    }
-
-    // MARK: - Seeding
-
-    /// Inserts the default categories if the store is empty. Safe to call
-    /// every launch — a no-op once any category exists.
-    func seedIfNeeded() throws {
-        let count = try modelContext.fetchCount(FetchDescriptor<Category>())
-        guard count == 0 else { return }
-        for (index, seed) in SeedData.defaults.enumerated() {
-            modelContext.insert(Category(name: seed.name, weeklyHours: seed.weeklyHours, sortOrder: index))
-        }
-        try modelContext.save()
+        // `LiveActivityManager()`'s default can't be a default-parameter
+        // expression directly: default-argument expressions are evaluated
+        // outside this initializer's @MainActor isolation, but constructing
+        // one here in the body runs on the main actor like the rest of init.
+        self.liveActivityManager = liveActivityManager ?? LiveActivityManager()
     }
 
     // MARK: - Session lifecycle
+
+    /// Every session app-wide with `endedAt == nil` — normally at most one,
+    /// since `start()` enforces the invariant, but this is also reused by
+    /// `reconcileLiveActivities()` where that invariant can't be assumed to
+    /// have held (e.g. right after a raw `importJSON` replace).
+    private func fetchRunningSessions() throws -> [Session] {
+        let runningPredicate = #Predicate<Session> { $0.endedAt == nil }
+        return try modelContext.fetch(FetchDescriptor<Session>(predicate: runningPredicate))
+    }
 
     /// At most one session may be running at a time: starting one ends
     /// whichever other session (in any category) was running. Explicitly
@@ -48,15 +53,22 @@ final class TimeStore {
     @discardableResult
     func start(category: Category) throws -> Session {
         let moment = now()
-        let runningPredicate = #Predicate<Session> { $0.endedAt == nil }
-        let currentlyRunning = try modelContext.fetch(FetchDescriptor<Session>(predicate: runningPredicate))
+        let currentlyRunning = try fetchRunningSessions()
         for session in currentlyRunning {
             session.endedAt = moment
+            if let endedCategory = session.category {
+                liveActivityManager.end(categoryId: endedCategory.id)
+            }
         }
 
         let session = Session(startedAt: moment, category: category)
         modelContext.insert(session)
         try modelContext.save()
+
+        let remainingAtStart = remaining(category, in: currentWeekInterval())
+        let deadline: Date? = remainingAtStart > 0 ? moment.addingTimeInterval(remainingAtStart) : nil
+        liveActivityManager.start(categoryId: category.id, categoryName: category.name, startedAt: moment, budgetDeadline: deadline)
+
         return session
     }
 
@@ -67,6 +79,7 @@ final class TimeStore {
         guard let session = runningSession(for: category) else { return }
         session.endedAt = now()
         try modelContext.save()
+        liveActivityManager.end(categoryId: category.id)
     }
 
     /// Records a manual time adjustment for when the user forgot to hit
@@ -120,6 +133,13 @@ final class TimeStore {
         categories.reduce(0) { $0 + remaining($1, in: week) }
     }
 
+    /// Sum of every category's `weeklyHours`, in hours — the static "how much
+    /// of the week is committed" total. Independent of week window or session
+    /// data; distinct from `totalRemaining`, which is live and burn-adjusted.
+    func totalAllocatedHours(_ categories: [Category]) -> Double {
+        categories.reduce(0) { $0 + $1.weeklyHours }
+    }
+
     // MARK: - Category CRUD
 
     func addCategory(name: String, weeklyHours: Double) throws {
@@ -137,13 +157,31 @@ final class TimeStore {
     func setWeeklyHours(_ category: Category, hours: Double) throws {
         category.weeklyHours = hours
         try modelContext.save()
+
+        // A running session's Live Activity countdown was computed off the
+        // old budget — refresh it so the lock screen doesn't silently lie
+        // about how much time is left. (Renaming a category, by contrast,
+        // is left alone: `categoryName` is a static ActivityAttributes
+        // field, so reflecting it would mean ending and re-requesting the
+        // Activity, causing a visible flicker for a purely cosmetic edit.)
+        if runningSession(for: category) != nil {
+            let remainingNow = remaining(category, in: currentWeekInterval())
+            let deadline: Date? = remainingNow > 0 ? now().addingTimeInterval(remainingNow) : nil
+            liveActivityManager.updateBudgetDeadline(categoryId: category.id, budgetDeadline: deadline)
+        }
     }
 
     /// Cascade delete rule on `Category.sessions` removes its sessions too —
-    /// no orphaned rows, no separate cleanup needed here.
+    /// no orphaned rows, no separate cleanup needed here. If `category` has
+    /// a running session, its Live Activity is ended too — otherwise it
+    /// would be orphaned on the lock screen with no session left to stop it.
     func delete(_ category: Category) throws {
+        let hadRunningSession = runningSession(for: category) != nil
         modelContext.delete(category)
         try modelContext.save()
+        if hadRunningSession {
+            liveActivityManager.end(categoryId: category.id)
+        }
     }
 
     func move(_ categories: [Category], fromOffsets: IndexSet, toOffset: Int) throws {
@@ -189,5 +227,50 @@ final class TimeStore {
         }
 
         try modelContext.save()
+
+        // This replace-all bypasses start()/stop() entirely, so it can leave
+        // a pre-import Live Activity pointing at a category that's gone (or
+        // no longer running), and/or restore an `endedAt == nil` session
+        // with no Live Activity ever requested for it. Self-heal immediately
+        // rather than waiting for the next foreground.
+        reconcileLiveActivities()
+    }
+
+    // MARK: - Live Activity reconciliation
+
+    /// Brings the system's set of active Live Activities back in line with
+    /// what `Session`/`Category` data actually says is running. Needed
+    /// because a Live Activity can diverge from the persisted running
+    /// session for reasons outside `start()`/`stop()`'s control: iOS's ~8h
+    /// staleness limit killing an Activity out from under a still-running
+    /// session, a device reboot, or a destructive `importJSON` replace.
+    ///
+    /// Non-throwing and error-swallowing by design: this runs on app launch
+    /// and on every foreground transition (see `BurndownApp.init()` and
+    /// `HomeView`'s `scenePhase` handling), neither of which should ever be
+    /// blocked or crashed by a reconciliation failure.
+    func reconcileLiveActivities() {
+        let running = (try? fetchRunningSessions())?.first
+        let expectedCategoryId = running?.category?.id
+        let activeCategoryIds = liveActivityManager.activeCategoryIds()
+
+        // End every Activity that doesn't match the one session that should
+        // actually be running (covers "activity but no session" and any
+        // stray extras, while never touching the one that's already correct
+        // — restarting a correct Activity would cause a visible flicker).
+        for categoryId in activeCategoryIds where categoryId != expectedCategoryId {
+            liveActivityManager.end(categoryId: categoryId)
+        }
+
+        // "Session but no matching activity" — (re)start it using the
+        // session's TRUE persisted startedAt, not now(), so elapsed resumes
+        // correctly. This is also what seamlessly resurrects an Activity
+        // that iOS killed for staleness.
+        if let running, let category = running.category, let expectedCategoryId,
+           !activeCategoryIds.contains(expectedCategoryId) {
+            let remainingNow = remaining(category, in: currentWeekInterval())
+            let deadline: Date? = remainingNow > 0 ? now().addingTimeInterval(remainingNow) : nil
+            liveActivityManager.start(categoryId: category.id, categoryName: category.name, startedAt: running.startedAt, budgetDeadline: deadline)
+        }
     }
 }

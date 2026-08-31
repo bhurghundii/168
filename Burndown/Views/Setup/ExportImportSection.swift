@@ -60,7 +60,7 @@ struct ExportImportSection: View {
                 return
             }
             guard (try? DataTransfer.decode(data)) != nil else {
-                errorMessage = "That file isn't a valid Burndown export."
+                errorMessage = "That file isn't a valid 168 export."
                 return
             }
             pendingImportData = data
@@ -75,7 +75,7 @@ struct ExportImportSection: View {
                 pendingImportData = nil
             }
         } message: { _ in
-            Text("This replaces every category and session currently in Burndown. This can't be undone.")
+            Text("This replaces every category and session currently in 168. This can't be undone.")
         }
         .alert("Import failed", isPresented: errorAlertBinding) {
             Button("OK") { errorMessage = nil }

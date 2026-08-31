@@ -13,21 +13,26 @@ targets:
     info:
       path: Generated/Burndown-Info.plist
       properties:
-        CFBundleDisplayName: Burndown
+        CFBundleDisplayName: "168"
         UILaunchScreen: {}
         UIUserInterfaceStyle: Dark
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        NSSupportsLiveActivities: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.local.burndown
+        PRODUCT_BUNDLE_IDENTIFIER: com.vikramaditya.burndown
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5"
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentBurn
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 9H49P3538K
+    dependencies:
+      - target: BurndownWidgets
     scheme:
       testTargets:
         - BurndownTests
@@ -42,3 +47,22 @@ targets:
       base:
         SWIFT_VERSION: "5"
         GENERATE_INFOPLIST_FILE: YES
+  BurndownWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: BurndownWidgets
+      - path: Burndown/Shared
+    info:
+      path: Generated/BurndownWidgets-Info.plist
+      properties:
+        CFBundleDisplayName: "168 Widgets"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vikramaditya.burndown.widgets
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 9H49P3538K

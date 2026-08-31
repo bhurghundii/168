@@ -32,8 +32,8 @@ final class TimeStoreTests: XCTestCase {
         return try ModelContainer(for: schema, configurations: [configuration])
     }
 
-    private func makeStore(container: ModelContainer, now: @escaping () -> Date) -> TimeStore {
-        TimeStore(modelContext: container.mainContext, calendar: calendar, now: now)
+    private func makeStore(container: ModelContainer, now: @escaping () -> Date, liveActivityManager: LiveActivityManaging? = nil) -> TimeStore {
+        TimeStore(modelContext: container.mainContext, calendar: calendar, now: now, liveActivityManager: liveActivityManager ?? FakeLiveActivityManager())
     }
 
     func testStartCreatesRunningSession() throws {
@@ -165,26 +165,131 @@ final class TimeStoreTests: XCTestCase {
         XCTAssertEqual(category.sessions.count, 0)
     }
 
-    func testSeedIfNeededPopulatesDefaultsOnEmptyStore() throws {
+    // MARK: - Live Activity wiring
+
+    func testStartCallsLiveActivityManagerWithCategoryStartedAtAndDeadline() throws {
         let container = try makeContainer()
         let fixedNow = date(2026, 6, 3, 12)
-        let store = makeStore(container: container) { fixedNow }
+        let fake = FakeLiveActivityManager()
+        let store = makeStore(container: container, now: { fixedNow }, liveActivityManager: fake)
+        let category = Category(name: "Work", weeklyHours: 10, sortOrder: 0)
+        container.mainContext.insert(category)
 
-        try store.seedIfNeeded()
+        try store.start(category: category)
 
-        let categories = try container.mainContext.fetch(FetchDescriptor<Category>())
-        XCTAssertEqual(categories.count, SeedData.defaults.count)
+        XCTAssertEqual(fake.startCalls.count, 1)
+        let call = try XCTUnwrap(fake.startCalls.first)
+        XCTAssertEqual(call.categoryId, category.id)
+        XCTAssertEqual(call.categoryName, "Work")
+        XCTAssertEqual(call.startedAt, fixedNow)
+        // 10 hours budgeted, nothing spent yet -> deadline is 10h after start.
+        XCTAssertEqual(call.budgetDeadline?.timeIntervalSince(fixedNow) ?? 0, 10 * 3600, accuracy: 1)
     }
 
-    func testSeedIfNeededIsNoOpWhenCategoriesExist() throws {
+    func testStartWhenAlreadyOverBudgetPassesNilDeadline() throws {
         let container = try makeContainer()
-        container.mainContext.insert(Category(name: "Existing", weeklyHours: 5, sortOrder: 0))
         let fixedNow = date(2026, 6, 3, 12)
-        let store = makeStore(container: container) { fixedNow }
+        let fake = FakeLiveActivityManager()
+        let store = makeStore(container: container, now: { fixedNow }, liveActivityManager: fake)
+        let category = Category(name: "Work", weeklyHours: 1, sortOrder: 0)
+        container.mainContext.insert(category)
+        try store.adjust(category: category, byHours: 2) // already 1h over the 1h budget
 
-        try store.seedIfNeeded()
+        try store.start(category: category)
 
-        let categories = try container.mainContext.fetch(FetchDescriptor<Category>())
-        XCTAssertEqual(categories.count, 1)
+        XCTAssertEqual(fake.startCalls.last?.budgetDeadline, nil)
+    }
+
+    func testStartingSecondCategoryEndsFirstCategoryLiveActivity() throws {
+        let container = try makeContainer()
+        let fixedNow = date(2026, 6, 3, 12)
+        let fake = FakeLiveActivityManager()
+        let store = makeStore(container: container, now: { fixedNow }, liveActivityManager: fake)
+        let a = Category(name: "A", weeklyHours: 10, sortOrder: 0)
+        let b = Category(name: "B", weeklyHours: 10, sortOrder: 1)
+        container.mainContext.insert(a)
+        container.mainContext.insert(b)
+
+        try store.start(category: a)
+        try store.start(category: b)
+
+        XCTAssertTrue(fake.endedCategoryIds.contains(a.id))
+        XCTAssertEqual(fake.startCalls.map(\.categoryId), [a.id, b.id])
+    }
+
+    func testStopEndsLiveActivityForCategory() throws {
+        let container = try makeContainer()
+        let fixedNow = date(2026, 6, 3, 12)
+        let fake = FakeLiveActivityManager()
+        let store = makeStore(container: container, now: { fixedNow }, liveActivityManager: fake)
+        let category = Category(name: "Work", weeklyHours: 10, sortOrder: 0)
+        container.mainContext.insert(category)
+
+        try store.start(category: category)
+        try store.stop(category: category)
+
+        XCTAssertTrue(fake.endedCategoryIds.contains(category.id))
+    }
+
+    func testStopWithNoRunningSessionDoesNotCallLiveActivityManager() throws {
+        let container = try makeContainer()
+        let fixedNow = date(2026, 6, 3, 12)
+        let fake = FakeLiveActivityManager()
+        let store = makeStore(container: container, now: { fixedNow }, liveActivityManager: fake)
+        let category = Category(name: "Work", weeklyHours: 10, sortOrder: 0)
+        container.mainContext.insert(category)
+
+        try store.stop(category: category)
+
+        XCTAssertTrue(fake.endedCategoryIds.isEmpty)
+    }
+
+    func testSetWeeklyHoursWhileRunningUpdatesLiveActivityDeadline() throws {
+        let container = try makeContainer()
+        let fixedNow = date(2026, 6, 3, 12)
+        let fake = FakeLiveActivityManager()
+        let store = makeStore(container: container, now: { fixedNow }, liveActivityManager: fake)
+        let category = Category(name: "Work", weeklyHours: 10, sortOrder: 0)
+        container.mainContext.insert(category)
+        try store.start(category: category)
+
+        try store.setWeeklyHours(category, hours: 5)
+
+        XCTAssertEqual(fake.updateCalls.count, 1)
+        XCTAssertEqual(fake.updateCalls.first?.categoryId, category.id)
+        XCTAssertEqual(fake.updateCalls.first?.budgetDeadline?.timeIntervalSince(fixedNow) ?? 0, 5 * 3600, accuracy: 1)
+    }
+
+    func testSetWeeklyHoursWhileNotRunningDoesNotTouchLiveActivity() throws {
+        let container = try makeContainer()
+        let fixedNow = date(2026, 6, 3, 12)
+        let fake = FakeLiveActivityManager()
+        let store = makeStore(container: container, now: { fixedNow }, liveActivityManager: fake)
+        let category = Category(name: "Work", weeklyHours: 10, sortOrder: 0)
+        container.mainContext.insert(category)
+
+        try store.setWeeklyHours(category, hours: 5)
+
+        XCTAssertTrue(fake.updateCalls.isEmpty)
+    }
+
+    // MARK: - Total allocated hours
+
+    func testTotalAllocatedHoursSumsAllCategories() throws {
+        let container = try makeContainer()
+        let store = makeStore(container: container) { self.date(2026, 6, 3, 12) }
+        let a = Category(name: "A", weeklyHours: 10, sortOrder: 0)
+        let b = Category(name: "B", weeklyHours: 20.5, sortOrder: 1)
+        container.mainContext.insert(a)
+        container.mainContext.insert(b)
+
+        XCTAssertEqual(store.totalAllocatedHours([a, b]), 30.5, accuracy: 0.001)
+    }
+
+    func testTotalAllocatedHoursIsZeroWithNoCategories() throws {
+        let container = try makeContainer()
+        let store = makeStore(container: container) { self.date(2026, 6, 3, 12) }
+
+        XCTAssertEqual(store.totalAllocatedHours([]), 0)
     }
 }

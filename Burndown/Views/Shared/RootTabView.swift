@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct RootTabView: View {
+    var presentAddCategoryOnAppear: Bool = false
+    @State private var isAddingCategory = false
+
     var body: some View {
         TabView {
             HomeView()
@@ -11,5 +14,13 @@ struct RootTabView: View {
                 .tabItem { Label("History", systemImage: "chart.bar") }
         }
         .tint(Color("AccentBurn"))
+        .sheet(isPresented: $isAddingCategory) {
+            AddCategorySheet()
+        }
+        .onAppear {
+            if presentAddCategoryOnAppear {
+                isAddingCategory = true
+            }
+        }
     }
 }
