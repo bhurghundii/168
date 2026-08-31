@@ -30,7 +30,7 @@ targets:
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: 5K69GQRW52
+        DEVELOPMENT_TEAM: 9H49P3538K
     dependencies:
       - target: BurndownWidgets
     scheme:
@@ -65,4 +65,4 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5"
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: 5K69GQRW52
+        DEVELOPMENT_TEAM: 9H49P3538K

@@ -376,11 +376,11 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					0C05F84F71F3B380D998D8C3 = {
-						DevelopmentTeam = 5K69GQRW52;
+						DevelopmentTeam = 9H49P3538K;
 						ProvisioningStyle = Automatic;
 					};
 					8152A971381D8AC1CA4FD33E = {
-						DevelopmentTeam = 5K69GQRW52;
+						DevelopmentTeam = 9H49P3538K;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -650,7 +650,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 5K69GQRW52;
+				DEVELOPMENT_TEAM = 9H49P3538K;
 				INFOPLIST_FILE = "Generated/Burndown-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -668,7 +668,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 5K69GQRW52;
+				DEVELOPMENT_TEAM = 9H49P3538K;
 				INFOPLIST_FILE = "Generated/BurndownWidgets-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -686,7 +686,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 5K69GQRW52;
+				DEVELOPMENT_TEAM = 9H49P3538K;
 				INFOPLIST_FILE = "Generated/BurndownWidgets-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -726,7 +726,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 5K69GQRW52;
+				DEVELOPMENT_TEAM = 9H49P3538K;
 				INFOPLIST_FILE = "Generated/Burndown-Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
