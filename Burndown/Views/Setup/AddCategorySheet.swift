@@ -1,11 +1,17 @@
+import SwiftData
 import SwiftUI
 
 struct AddCategorySheet: View {
     @Environment(TimeStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @Query private var categories: [Category]
 
     @State private var name = ""
     @State private var weeklyHours = ""
+
+    private var projectedTotal: Double {
+        store.totalAllocatedHours(categories) + (Double(weeklyHours) ?? 0)
+    }
 
     var body: some View {
         NavigationStack {
@@ -13,6 +19,10 @@ struct AddCategorySheet: View {
                 TextField("Name", text: $name)
                 TextField("Weekly hours", text: $weeklyHours)
                     .keyboardType(.decimalPad)
+
+                Section {
+                    BudgetAllocationSummary(allocatedHours: projectedTotal)
+                }
             }
             .navigationTitle("Add Category")
             .toolbar {

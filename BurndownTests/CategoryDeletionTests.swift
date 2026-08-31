@@ -31,7 +31,8 @@ final class CategoryDeletionTests: XCTestCase {
 
     func testDeletingCategoryWithRunningSessionDoesNotCrash() throws {
         let container = try makeContainer()
-        let store = TimeStore(modelContext: container.mainContext)
+        let fake = FakeLiveActivityManager()
+        let store = TimeStore(modelContext: container.mainContext, liveActivityManager: fake)
         let category = Category(name: "Work", weeklyHours: 10, sortOrder: 0)
         container.mainContext.insert(category)
         try store.start(category: category)
@@ -40,6 +41,10 @@ final class CategoryDeletionTests: XCTestCase {
 
         let remainingSessions = try container.mainContext.fetch(FetchDescriptor<Session>())
         XCTAssertTrue(remainingSessions.isEmpty)
+        // Without this, the Live Activity would be orphaned on the lock
+        // screen indefinitely — its session was cascade-deleted, but
+        // nothing ever called stop() to end the Activity.
+        XCTAssertTrue(fake.endedCategoryIds.contains(category.id))
     }
 
     func testDeletingOneCategoryDoesNotAffectOthers() throws {

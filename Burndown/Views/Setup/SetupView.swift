@@ -11,6 +11,10 @@ struct SetupView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    BudgetAllocationSummary(allocatedHours: store.totalAllocatedHours(categories))
+                }
+
                 Section("Categories") {
                     ForEach(categories) { category in
                         CategoryEditRow(category: category)
